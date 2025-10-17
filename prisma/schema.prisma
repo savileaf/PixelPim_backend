@@ -16,13 +16,17 @@ model User {
   googleId        String?          @unique
   provider        String           @default("local")
   createdAt       DateTime         @default(now())
-  attributes      Attribute[]      @relation("UserAttributes")
-  attributeGroups AttributeGroup[] @relation("UserAttributeGroups")
-  families        Family[]         @relation("UserFamilies")
-  categories      Category[]       @relation("UserCategories")
-  products        Product[]        @relation("UserProducts")
-  assets          Asset[]          @relation("UserAssets")
-  assetGroups     AssetGroup[]     @relation("UserAssetGroups")
+
+  attributes         Attribute[]         @relation("UserAttributes")
+  attributeGroups    AttributeGroup[]    @relation("UserAttributeGroups")
+  families           Family[]            @relation("UserFamilies")
+  categories         Category[]          @relation("UserCategories")
+  products           Product[]           @relation("UserProducts")
+  assets             Asset[]             @relation("UserAssets")
+  assetGroups        AssetGroup[]        @relation("UserAssetGroups")
+  notifications      Notification[]      @relation("UserNotifications")
+  scheduledImports   ScheduledImport[]   @relation("UserScheduledImports")
+  importExecutionLogs ImportExecutionLog[] @relation("UserImportExecutionLogs")
 }
 
 model Otp {
@@ -39,28 +43,34 @@ model Otp {
 
 model Attribute {
   id               Int                       @id @default(autoincrement())
-  name             String                    @unique
+  name             String
   type             String
   defaultValue     String?
   userId           Int
   createdAt        DateTime                  @default(now())
   updatedAt        DateTime                  @updatedAt
+
   user             User                      @relation("UserAttributes", fields: [userId], references: [id], onDelete: Cascade)
   attributeGroups  AttributeGroupAttribute[]
   familyAttributes FamilyAttribute[]
-  products         Product[]                 @relation("ProductAttributes")
+  products         ProductAttribute[]
+
+  @@unique([name, userId])
 }
 
 model AttributeGroup {
   id          Int                       @id @default(autoincrement())
-  name        String                    @unique
+  name        String
   description String?
   userId      Int
   createdAt   DateTime                  @default(now())
   updatedAt   DateTime                  @updatedAt
+
   user        User                      @relation("UserAttributeGroups", fields: [userId], references: [id], onDelete: Cascade)
   attributes  AttributeGroupAttribute[]
   products    Product[]                 @relation("ProductAttributeGroups")
+
+  @@unique([name, userId])
 }
 
 model AttributeGroupAttribute {
@@ -70,6 +80,7 @@ model AttributeGroupAttribute {
   required         Boolean        @default(false)
   defaultValue     String?
   createdAt        DateTime       @default(now())
+
   attributeGroup   AttributeGroup @relation(fields: [attributeGroupId], references: [id], onDelete: Cascade)
   attribute        Attribute      @relation(fields: [attributeId], references: [id], onDelete: Cascade)
 
@@ -82,6 +93,7 @@ model Family {
   userId           Int
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+
   user             User              @relation("UserFamilies", fields: [userId], references: [id], onDelete: Cascade)
   familyAttributes FamilyAttribute[]
   products         Product[]         @relation("ProductFamilies")
@@ -96,8 +108,10 @@ model FamilyAttribute {
   isRequired      Boolean   @default(false)
   additionalValue String?
   createdAt       DateTime  @default(now())
-  attribute       Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+
   family          Family    @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  attribute       Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  products        ProductAttribute[]
 
   @@unique([familyId, attributeId])
 }
@@ -110,12 +124,15 @@ model Category {
   userId           Int
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
+
   parentCategory   Category?  @relation("CategoryParent", fields: [parentCategoryId], references: [id])
   subcategories    Category[] @relation("CategoryParent")
   user             User       @relation("UserCategories", fields: [userId], references: [id], onDelete: Cascade)
   products         Product[]  @relation("CategoryProducts")
 
-  @@unique([name, userId])
+  // Unique constraint for root categories (parentCategoryId is null)
+  // Separate unique constraint for subcategories within same parent
+  @@unique([name, userId, parentCategoryId])
 }
 
 model Product {
@@ -124,32 +141,64 @@ model Product {
   sku              String
   productLink      String?
   imageUrl         String?
-  status           String          @default("incomplete") // complete, incomplete
+  subImages        String[]        @default([])
+  status           String          @default("incomplete")
   categoryId       Int?
-  attributeId      Int?
   attributeGroupId Int?
   familyId         Int?
   userId           Int
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
+
   category         Category?       @relation("CategoryProducts", fields: [categoryId], references: [id])
-  attribute        Attribute?      @relation("ProductAttributes", fields: [attributeId], references: [id])
+  attributes       ProductAttribute[]
   attributeGroup   AttributeGroup? @relation("ProductAttributeGroups", fields: [attributeGroupId], references: [id])
   family           Family?         @relation("ProductFamilies", fields: [familyId], references: [id])
   user             User            @relation("UserProducts", fields: [userId], references: [id], onDelete: Cascade)
 
+  // Variant relationships (symmetric many-to-many)
+  variantLinksA    ProductVariant[] @relation("ProductVariantA")
+  variantLinksB    ProductVariant[] @relation("ProductVariantB")
+
+  // Assets attached to Product via join table
+  assets          ProductAsset[]
+
   @@unique([sku, userId])
   @@unique([name, userId])
+}
+
+model ProductVariant {
+  id         Int     @id @default(autoincrement())
+  productAId Int
+  productBId Int
+
+  productA   Product @relation("ProductVariantA", fields: [productAId], references: [id], onDelete: Cascade)
+  productB   Product @relation("ProductVariantB", fields: [productBId], references: [id], onDelete: Cascade)
+
+  @@unique([productAId, productBId])
+  @@map("product_variants")
+}
+
+model ProductAsset {
+  id        Int      @id @default(autoincrement())
+  productId Int
+  assetId   Int
+
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  asset     Asset    @relation("ProductAssetToAsset", fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, assetId])
 }
 
 model AssetGroup {
   id          Int      @id @default(autoincrement())
   groupName   String
   createdDate DateTime @default(now())
-  totalSize   BigInt   @default(0) // Size in bytes
+  totalSize   BigInt   @default(0)
   userId      Int
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
   user        User     @relation("UserAssetGroups", fields: [userId], references: [id], onDelete: Cascade)
   assets      Asset[]  @relation("AssetGroupAssets")
 
@@ -159,17 +208,98 @@ model AssetGroup {
 model Asset {
   id           Int         @id @default(autoincrement())
   name         String
-  fileName     String      // Original filename
-  filePath     String      // Server file path
-  mimeType     String      // File MIME type
+  fileName     String
+  filePath     String
+  mimeType     String
   uploadDate   DateTime    @default(now())
-  size         BigInt      // File size in bytes
+  size         BigInt
   userId       Int
   assetGroupId Int?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
+
   user         User        @relation("UserAssets", fields: [userId], references: [id], onDelete: Cascade)
   assetGroup   AssetGroup? @relation("AssetGroupAssets", fields: [assetGroupId], references: [id], onDelete: SetNull)
+  productAssets ProductAsset[] @relation("ProductAssetToAsset")
 
   @@unique([name, userId])
+}
+
+model ProductAttribute {
+  id               Int       @id @default(autoincrement())
+  productId        Int
+  attributeId      Int
+  familyAttributeId Int?
+  value            String?
+  createdAt        DateTime  @default(now())
+
+  product          Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  attribute        Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  familyAttribute  FamilyAttribute? @relation(fields: [familyAttributeId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, attributeId])
+}
+
+model Notification {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  entityType  String   // 'product', 'attribute', 'category', 'family', 'asset', 'assetGroup', 'productVariant'
+  entityId    Int?     // ID of the entity that was acted upon
+  action      String   // 'created', 'updated', 'deleted'
+  entityName  String?  // Name of the entity for better readability
+  message     String   // Human readable message like "Product 'iPhone 13' was created"
+  metadata    Json?    // Additional data like old/new values, affected count, etc.
+  createdAt   DateTime @default(now())
+
+  user        User     @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([entityType, action])
+}
+
+model ScheduledImport {
+  id             String             @id @default(cuid())
+  name           String?
+  description    String?
+  cronExpression String
+  csvUrl         String
+  status         String             @default("pending") // pending, active, paused, cancelled
+  isActive       Boolean            @default(true)
+  lastRun        DateTime?
+  nextRun        DateTime?
+  errorCount     Int                @default(0)
+  successCount   Int                @default(0)
+  userId         Int
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  user           User               @relation("UserScheduledImports", fields: [userId], references: [id], onDelete: Cascade)
+  executionLogs  ImportExecutionLog[]
+
+  @@index([userId, status])
+  @@index([isActive, nextRun])
+}
+
+model ImportExecutionLog {
+  id                Int             @id @default(autoincrement())
+  scheduledImportId String
+  status            String          // processing, completed, failed
+  startTime         DateTime        @default(now())
+  endTime           DateTime?
+  itemsProcessed    Int             @default(0)
+  itemsImported     Int             @default(0)
+  itemsFailed       Int             @default(0)
+  errorMessage      String?
+  errorDetails      Json?
+  executionSummary  Json?           // Store detailed results, errors array, etc.
+  userId            Int
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  scheduledImport   ScheduledImport @relation(fields: [scheduledImportId], references: [id], onDelete: Cascade)
+  user              User            @relation("UserImportExecutionLogs", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([scheduledImportId, createdAt])
+  @@index([userId, status])
+  @@index([startTime])
 }

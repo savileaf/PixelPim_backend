@@ -16,7 +16,7 @@ export enum UserAttributeType {
 export const USER_TO_STORAGE_TYPE_MAP = {
   [UserAttributeType.SHORT_TEXT]: 'STRING',
   [UserAttributeType.PARAGRAPH]: 'TEXT',
-  [UserAttributeType.HTML]: 'TEXT', // HTML content stored as TEXT
+  [UserAttributeType.HTML]: 'HTML',
   [UserAttributeType.INTEGER]: 'INTEGER',
   [UserAttributeType.DECIMAL]: 'NUMBER',
   [UserAttributeType.DROPDOWN]: 'ENUM',
@@ -44,4 +44,14 @@ export function storageTypeToUserType(storageType: string): UserAttributeType | 
 // Get all available user-friendly types
 export function getAvailableUserTypes(): UserAttributeType[] {
   return Object.values(UserAttributeType);
+}
+
+export function getUserFriendlyType(type: string): string {
+  // Check if the type is a valid storage type
+  const userType = storageTypeToUserType(type as keyof typeof STORAGE_TO_USER_TYPE_MAP);
+  if (userType) {
+    return userType;  // Return the user-friendly type
+  }
+  // If it's not a valid storage type, return the original type
+  return type;
 }

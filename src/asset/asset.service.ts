@@ -1,14 +1,45 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAssetDto, UpdateAssetDto } from './dto';
-import { CloudinaryUtil, CloudinaryUploadResult } from '../utils/cloudinary.util';
-import { PaginatedResponse, PaginationUtils } from '../common';
+import {
+  CloudinaryUtil,
+  CloudinaryUploadResult,
+} from '../utils/cloudinary.util';
+import { PaginationUtils } from '../common';
 
 @Injectable()
 export class AssetService {
   constructor(private prisma: PrismaService) {}
+  // Utility to recursively convert BigInt values to strings while preserving dates
+  private static convertBigIntToString(obj: any): any {
+    if (typeof obj === 'bigint') {
+      return obj.toString();
+    }
+    if (obj instanceof Date) {
+      return obj.toISOString();
+    }
+    if (Array.isArray(obj)) {
+      return obj.map(AssetService.convertBigIntToString);
+    }
+    if (obj && typeof obj === 'object') {
+      const newObj: any = {};
+      for (const key in obj) {
+        newObj[key] = AssetService.convertBigIntToString(obj[key]);
+      }
+      return newObj;
+    }
+    return obj;
+  }
 
-  async create(createAssetDto: CreateAssetDto, file: Express.Multer.File, userId: number) {
+  async create(
+    createAssetDto: CreateAssetDto,
+    file: Express.Multer.File,
+    userId: number,
+  ) {
     if (!file) {
       throw new BadRequestException('File is required');
     }
@@ -17,13 +48,20 @@ export class AssetService {
       throw new BadRequestException('User ID is required');
     }
 
-    console.log('Creating asset with userId:', userId, 'file:', file.originalname);
+    console.log(
+      'Creating asset with userId:',
+      userId,
+      'file:',
+      file.originalname,
+    );
 
-    // Upload file to Cloudinary
+    // Upload to Cloudinary
     const uploadOptions = CloudinaryUtil.getAssetUploadOptions();
-    const cloudinaryResult: CloudinaryUploadResult = await CloudinaryUtil.uploadFile(file, uploadOptions);
+    const cloudinaryResult: CloudinaryUploadResult =
+      await CloudinaryUtil.uploadFile(file, uploadOptions);
+    console.log('Cloudinary upload result:', cloudinaryResult);
 
-    // Check if asset group exists if provided
+    // Check asset group exists
     if (createAssetDto.assetGroupId) {
       const assetGroup = await this.prisma.assetGroup.findFirst({
         where: {
@@ -37,11 +75,12 @@ export class AssetService {
       }
     }
 
+    // Store secure_url in filePath
     const asset = await this.prisma.asset.create({
       data: {
         name: createAssetDto.name,
         fileName: cloudinaryResult.original_filename || file.originalname,
-        filePath: cloudinaryResult.public_id, // Store Cloudinary public_id as file path
+        filePath: cloudinaryResult.secure_url, // ✅ Store full URL
         mimeType: file.mimetype,
         size: cloudinaryResult.bytes,
         userId,
@@ -52,31 +91,87 @@ export class AssetService {
       },
     });
 
-    // Update asset group total size if asset is assigned to a group
+    // Update group size
     if (createAssetDto.assetGroupId) {
       await this.updateAssetGroupSize(createAssetDto.assetGroupId);
     }
 
     return {
-      ...asset,
-      size: Number(asset.size), // Convert BigInt to Number for JSON serialization
-      url: cloudinaryResult.secure_url,
-      thumbnailUrl: CloudinaryUtil.getThumbnailUrl(cloudinaryResult.public_id),
+      ...AssetService.convertBigIntToString(asset),
+      size: Number(asset.size),
+      url: asset.filePath, // ✅ Return full URL
       formattedSize: CloudinaryUtil.formatFileSize(Number(asset.size)),
-      cloudinaryData: {
-        public_id: cloudinaryResult.public_id,
-        format: cloudinaryResult.format,
-        resource_type: cloudinaryResult.resource_type,
-        created_at: cloudinaryResult.created_at,
-      },
     };
   }
 
-  async findAll(userId: number, assetGroupId?: number, page: number = 1, limit: number = 10) {
+  async findAll(
+    userId: number,
+    assetGroupId?: number,
+    page: number = 1,
+    limit: number = 10,
+    filters: any = {},
+  ) {
     const whereCondition: any = { userId };
     
+    // Group filter
     if (assetGroupId !== undefined) {
       whereCondition.assetGroupId = assetGroupId;
+    }
+
+    // Has group filter
+    if (filters.hasGroup !== undefined) {
+      if (filters.hasGroup === true) {
+        whereCondition.assetGroupId = { not: null };
+      } else if (filters.hasGroup === false) {
+        whereCondition.assetGroupId = null;
+      }
+    }
+
+    // Search filter (name or fileName)
+    if (filters.search) {
+      whereCondition.OR = [
+        { name: { contains: filters.search, mode: 'insensitive' } },
+        { fileName: { contains: filters.search, mode: 'insensitive' } },
+      ];
+    }
+
+    // MIME type filter
+    if (filters.mimeType) {
+      whereCondition.mimeType = { contains: filters.mimeType, mode: 'insensitive' };
+    }
+
+    // Size filters
+    if (filters.minSize !== undefined || filters.maxSize !== undefined) {
+      whereCondition.size = {};
+      if (filters.minSize !== undefined) {
+        whereCondition.size.gte = filters.minSize;
+      }
+      if (filters.maxSize !== undefined) {
+        whereCondition.size.lte = filters.maxSize;
+      }
+    }
+
+    // Date range filters
+    if (filters.createdAfter || filters.createdBefore) {
+      whereCondition.createdAt = {};
+      if (filters.createdAfter) {
+        whereCondition.createdAt.gte = new Date(filters.createdAfter);
+      }
+      if (filters.createdBefore) {
+        whereCondition.createdAt.lte = new Date(filters.createdBefore);
+      }
+    }
+
+    // Sorting logic
+    let orderBy: any = { createdAt: 'desc' };
+    
+    if (filters.dateFilter) {
+      orderBy = { createdAt: filters.dateFilter === 'latest' ? 'desc' : 'asc' };
+    } else if (filters.sortBy) {
+      const validSortFields = ['name', 'fileName', 'size', 'createdAt', 'updatedAt'];
+      if (validSortFields.includes(filters.sortBy)) {
+        orderBy = { [filters.sortBy]: filters.sortOrder || 'asc' };
+      }
     }
 
     const paginationOptions = PaginationUtils.createPrismaOptions(page, limit);
@@ -88,23 +183,24 @@ export class AssetService {
         include: {
           assetGroup: true,
         },
-        orderBy: {
-          createdAt: 'desc',
-        },
+        orderBy,
       }),
       this.prisma.asset.count({ where: whereCondition }),
     ]);
 
-    // Add Cloudinary URLs to each asset
-    const transformedAssets = assets.map(asset => ({
-      ...asset,
-      size: Number(asset.size), // Convert BigInt to Number for JSON serialization
-      url: CloudinaryUtil.getOptimizedUrl(asset.filePath),
-      thumbnailUrl: CloudinaryUtil.getThumbnailUrl(asset.filePath),
+    const transformedAssets = assets.map((asset) => ({
+      ...AssetService.convertBigIntToString(asset),
+      size: Number(asset.size),
+      url: asset.filePath, // ✅ Use filePath as URL
       formattedSize: CloudinaryUtil.formatFileSize(Number(asset.size)),
     }));
 
-    return PaginationUtils.createPaginatedResponse(transformedAssets, total, page, limit);
+    return PaginationUtils.createPaginatedResponse(
+      transformedAssets,
+      total,
+      page,
+      limit,
+    );
   }
 
   async findOne(id: number, userId: number) {
@@ -120,20 +216,25 @@ export class AssetService {
     }
 
     return {
-      ...asset,
-      size: Number(asset.size), // Convert BigInt to Number for JSON serialization
-      url: CloudinaryUtil.getOptimizedUrl(asset.filePath),
-      thumbnailUrl: CloudinaryUtil.getThumbnailUrl(asset.filePath),
+      ...AssetService.convertBigIntToString(asset),
+      size: Number(asset.size),
+      url: asset.filePath, // ✅ Use filePath as URL
       formattedSize: CloudinaryUtil.formatFileSize(Number(asset.size)),
     };
   }
 
-  async update(id: number, updateAssetDto: UpdateAssetDto, userId: number) {
+  async update(
+    id: number,
+    updateAssetDto: UpdateAssetDto,
+    userId: number,
+  ) {
     const asset = await this.findOne(id, userId);
     const oldAssetGroupId = asset.assetGroupId;
-
-    // Check if new asset group exists
-    if (updateAssetDto.assetGroupId && updateAssetDto.assetGroupId !== oldAssetGroupId) {
+    console.log('Updating asset:', id, 'with data:', updateAssetDto);
+    if (
+      updateAssetDto.assetGroupId &&
+      updateAssetDto.assetGroupId !== oldAssetGroupId
+    ) {
       const assetGroup = await this.prisma.assetGroup.findFirst({
         where: {
           id: updateAssetDto.assetGroupId,
@@ -154,7 +255,6 @@ export class AssetService {
       },
     });
 
-    // Update asset group sizes if group changed
     if (oldAssetGroupId !== updateAssetDto.assetGroupId) {
       if (oldAssetGroupId) {
         await this.updateAssetGroupSize(oldAssetGroupId);
@@ -164,15 +264,21 @@ export class AssetService {
       }
     }
 
-    return updatedAsset;
+    return {
+      ...AssetService.convertBigIntToString(updatedAsset),
+      size: Number(updatedAsset.size),
+      url: updatedAsset.filePath,
+      formattedSize: CloudinaryUtil.formatFileSize(Number(updatedAsset.size)),
+    };
   }
 
   async remove(id: number, userId: number) {
     const asset = await this.findOne(id, userId);
 
-    // Delete the file from Cloudinary
+    // Delete file from Cloudinary using public_id
     try {
-      await CloudinaryUtil.deleteFile(asset.filePath);
+      const publicId = CloudinaryUtil.extractPublicId(asset.filePath);
+      await CloudinaryUtil.deleteFile(publicId);
     } catch (error) {
       console.error('Error deleting file from Cloudinary:', error);
     }
@@ -181,7 +287,6 @@ export class AssetService {
       where: { id },
     });
 
-    // Update asset group size if asset was in a group
     if (asset.assetGroupId) {
       await this.updateAssetGroupSize(asset.assetGroupId);
     }

@@ -1290,7 +1290,6 @@ Delete an asset and remove it from cloud storage.
 **Authentication:** Required (JWT token)
 
 **Parameters:**
-- `id`: Asset ID (integer)
 
 **Success Response (200):**
 ```json
@@ -1300,8 +1299,39 @@ Delete an asset and remove it from cloud storage.
 ```
 
 **Error Responses:**
-- `404 Not Found` - Asset not found
-- `403 Forbidden` - You can only access your own assets
+
+---
+
+#### Attach Assets to Group
+Attach multiple assets to an asset group by passing an array of asset IDs.
+
+**Endpoint:** `POST /asset-groups/:id/attach-assets`
+
+**Authentication:** Required (JWT token)
+
+**Parameters:**
+- `id`: Asset Group ID (integer)
+
+**Request Body:**
+```json
+{
+  "assetIds": [1, 2, 3]
+}
+```
+
+**Validation Rules:**
+- `assetIds`: Array of asset IDs (integer), must not be empty
+
+**Success Response (200):**
+```json
+{
+  "message": "3 assets attached to group 1"
+}
+```
+
+**Error Responses:**
+- `404 Not Found` - Asset group not found
+- `403 Forbidden` - You can only access your own asset groups
 
 ---
 
@@ -1941,9 +1971,24 @@ Create a new product.
   "imageUrl": "https://example.com/images/iphone15pro.jpg",
   "status": "complete",
   "categoryId": 3,
-  "attributeId": 1,
   "attributeGroupId": 1,
-  "familyId": 1
+  "familyId": 1,
+  "familyAttributesWithValues": [
+    {
+      "attributeId": 10,
+      "value": "Apple"
+    },
+    {
+      "attributeId": 11,
+      "value": "Pro Max"
+    }
+  ],
+  "attributesWithValues": [
+    {
+      "attributeId": 1,
+      "value": "Premium"
+    }
+  ]
 }
 ```
 
@@ -1954,9 +1999,10 @@ Create a new product.
 - `imageUrl`: Optional valid URL
 - `status`: Optional string ("complete" or "incomplete", default: "incomplete")
 - `categoryId`: Optional integer (must belong to user)
-- `attributeId`: Optional integer (must belong to user)
 - `attributeGroupId`: Optional integer (must belong to user)
 - `familyId`: Optional integer (must belong to user)
+- `familyAttributesWithValues`: Optional array of family attribute values (requires familyId)
+- `attributesWithValues`: Optional array of regular attribute values
 
 **Success Response (201):**
 ```json
@@ -2011,13 +2057,16 @@ Retrieve all products with filtering options.
 **Authentication:** Required (JWT token)
 
 **Query Parameters:**
+- `search`: Search products by name or SKU (case-insensitive)
 - `status`: Filter by status ("complete" or "incomplete")
 - `categoryId`: Filter by category ID
 - `attributeId`: Filter by attribute ID
 - `attributeGroupId`: Filter by attribute group ID
 - `familyId`: Filter by family ID
+- `page`: Page number (default: 1)
+- `limit`: Number of items per page (default: 10)
 
-**Example:** `GET /products?status=complete&categoryId=1&familyId=2`
+**Example:** `GET /products?search=iphone&status=complete&categoryId=1&familyId=2`
 
 **Success Response (200):**
 ```json
@@ -2202,6 +2251,252 @@ Delete a product.
 - `404 Not Found` - Product not found
 - `403 Forbidden` - You can only access your own products
 
+---
+
+#### Create Product Variants
+Create direct variant relationships between a main product and specified variant products.
+
+**Endpoint:** `POST /products/variants`
+
+**Authentication:** Required (JWT token)
+
+**Behavior:** Creates only direct relationships between `productId` and each product in `variantProductIds`. This creates a star pattern where the main product is directly linked to each variant, but variants are NOT automatically linked to each other.
+
+**Example:**
+If you link product 1 to products [2, 3, 4], it creates:
+- 1 ↔ 2
+- 1 ↔ 3  
+- 1 ↔ 4
+
+But NOT: 2 ↔ 3, 2 ↔ 4, or 3 ↔ 4
+
+**Request Body:**
+```json
+{
+  "productId": 1,
+  "variantProductIds": [2, 3, 4]
+}
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:3000/products/variants \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE" \
+  -d '{
+    "productId": 1,
+    "variantProductIds": [2, 3, 4]
+  }'
+```
+
+**Success Response (201):**
+```json
+{
+  "message": "Successfully created 3 direct variant relationships. Each selected product is now linked directly to product 1.",
+  "created": 3
+}
+```
+
+**Error Responses:**
+- `400 Bad Request` - Invalid product IDs or self-referencing variants
+- `404 Not Found` - One or more products not found
+- `409 Conflict` - Variant relationship already exists
+
+---
+
+#### Get All Product Variants
+Get all product variants for the authenticated user with pagination and sorting.
+
+**Endpoint:** `GET /products/variants`
+
+**Authentication:** Required (JWT token)
+
+**Query Parameters:**
+- `page`: Page number (default: 1, minimum: 1)
+- `limit`: Number of items per page (default: 10, minimum: 1, maximum: 100)
+- `sortBy`: Field to sort by - "name" or "sku" (default: "name")
+- `sortOrder`: Sort order - "asc" or "desc" (default: "asc")
+- `search`: Search term to filter by product name or SKU (case-insensitive partial matching)
+- `status`: Filter products by status - "complete" or "incomplete"
+
+**Examples:**
+```bash
+# Basic request
+curl -X GET http://localhost:3000/products/variants \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# With pagination
+curl -X GET http://localhost:3000/products/variants?page=2&limit=5 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# With sorting by name descending
+curl -X GET http://localhost:3000/products/variants?sortBy=name&sortOrder=desc \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# With sorting by SKU ascending
+curl -X GET http://localhost:3000/products/variants?sortBy=sku&sortOrder=asc \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# With search filtering
+curl -X GET http://localhost:3000/products/variants?search=iPhone \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# With status filtering (complete products only)
+curl -X GET http://localhost:3000/products/variants?status=complete \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# With status filtering (incomplete products only)
+curl -X GET http://localhost:3000/products/variants?status=incomplete \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# Combined search and status filtering
+curl -X GET http://localhost:3000/products/variants?search=Pro&status=complete \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# Combined pagination and sorting
+curl -X GET http://localhost:3000/products/variants?page=1&limit=10&sortBy=name&sortOrder=asc \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# Full query with all parameters
+curl -X GET http://localhost:3000/products/variants?search=iPhone&status=complete&page=1&limit=5&sortBy=sku&sortOrder=desc \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+```
+
+**Success Response (200):**
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "productAId": 1,
+      "productBId": 2,
+      "productA": {
+        "id": 1,
+        "name": "iPhone 15 Pro",
+        "sku": "IPH-15-PRO-256",
+        "imageUrl": "https://example.com/image.jpg",
+        "status": "active"
+      },
+      "productB": {
+        "id": 2,
+        "name": "iPhone 15 Pro Max",
+        "sku": "IPH-15-PMAX-256",
+        "imageUrl": "https://example.com/image2.jpg",
+        "status": "active"
+      }
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 25,
+    "totalPages": 3,
+    "hasNext": true,
+    "hasPrev": false
+  }
+}
+```
+
+---
+
+#### Get Product Variants for Specific Product
+Get all variants of a specific product with pagination and sorting.
+
+**Endpoint:** `GET /products/:id/variants`
+
+**Authentication:** Required (JWT token)
+
+**Parameters:**
+- `id`: Product ID (integer)
+
+**Query Parameters:**
+- `page`: Page number (default: 1, minimum: 1)
+- `limit`: Number of items per page (default: 10, minimum: 1, maximum: 100)
+- `sortBy`: Field to sort by - "name" or "sku" (default: "name")
+- `sortOrder`: Sort order - "asc" or "desc" (default: "asc")
+- `search`: Search term to filter by product name or SKU (case-insensitive partial matching)
+- `status`: Filter products by status - "complete" or "incomplete"
+
+**Examples:**
+```bash
+# Basic request
+curl -X GET http://localhost:3000/products/1/variants \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# With pagination
+curl -X GET http://localhost:3000/products/1/variants?page=2&limit=5 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# With sorting by SKU descending
+curl -X GET http://localhost:3000/products/1/variants?sortBy=sku&sortOrder=desc \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# With search filtering
+curl -X GET http://localhost:3000/products/1/variants?search=Pro \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# With status filtering (complete products only)
+curl -X GET http://localhost:3000/products/1/variants?status=complete \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# With status filtering (incomplete products only)
+curl -X GET http://localhost:3000/products/1/variants?status=incomplete \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# Combined search and status filtering
+curl -X GET http://localhost:3000/products/1/variants?search=Max&status=complete \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# Full query with all parameters
+curl -X GET http://localhost:3000/products/1/variants?search=iPhone&status=complete&page=1&limit=5&sortBy=sku&sortOrder=desc \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+```
+
+**Success Response (200):**
+Same format as "Get All Product Variants" response.
+
+**Error Responses:**
+- `400 Bad Request` - Invalid product ID or query parameters
+- `404 Not Found` - Product not found
+- `403 Forbidden` - You can only access your own products
+
+---
+
+#### Remove Product Variant
+Remove a specific variant relationship between two products.
+
+**Endpoint:** `DELETE /products/variants/:productId/:variantProductId`
+
+**Authentication:** Required (JWT token)
+
+**Parameters:**
+- `productId`: Product ID (integer)
+- `variantProductId`: Variant Product ID (integer)
+
+**Behavior:** Removes only the direct relationship between the two specified products. Other variant relationships remain intact.
+
+**Example:**
+If products A, B, and C are all linked as variants (A↔B, A↔C, B↔C), removing the relationship between A and B will only remove A↔B, leaving A↔C and B↔C intact.
+
+```bash
+curl -X DELETE https://pixelpim.onrender.com/products/variants/433/432 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+```
+
+**Success Response (200):**
+```json
+{
+  "message": "Successfully removed variant relationship between products 433 and 432."
+}
+```
+
+**Error Responses:**
+- `404 Not Found` - Product or variant relationship not found
+- `400 Bad Request` - Invalid productId or variantProductId
+- `403 Forbidden` - You can only modify your own products
+
+---
+
 ## Testing with cURL
 
 ### Send OTP
@@ -2353,13 +2648,28 @@ curl -X POST http://localhost:3000/products \
     "imageUrl":"https://example.com/images/iphone15pro.jpg",
     "status":"complete",
     "categoryId":3,
-    "familyId":1
+    "familyId":1,
+    "familyAttributesWithValues":[
+      {"attributeId":10,"value":"Apple"},
+      {"attributeId":11,"value":"Pro Max"}
+    ],
+    "attributesWithValues":[
+      {"attributeId":1,"value":"Premium"}
+    ]
   }'
 ```
 
 ### Get All Products
 ```bash
 curl -X GET http://localhost:3000/products \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# With search
+curl -X GET "http://localhost:3000/products?search=iphone" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# With multiple filters
+curl -X GET "http://localhost:3000/products?search=galaxy&status=complete&page=1&limit=5" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
 ```
 

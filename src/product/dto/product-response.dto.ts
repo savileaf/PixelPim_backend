@@ -1,27 +1,31 @@
+import { Transform } from 'class-transformer';
+
+export class ProductVariantSummaryDto {
+  id: number;
+  name: string;
+  sku: string;
+  imageUrl?: string;
+  status: string;
+}
+
 export class ProductResponseDto {
   id: number;
   name: string;
   sku: string;
   productLink?: string;
   imageUrl?: string;
+  subImages?: string[];
   status: string;
   categoryId?: number;
-  attributeId?: number;
   attributeGroupId?: number;
   familyId?: number;
   userId: number;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
   category?: {
     id: number;
     name: string;
     description?: string;
-  };
-  attribute?: {
-    id: number;
-    name: string;
-    type: string;
-    defaultValue?: string;
   };
   attributeGroup?: {
     id: number;
@@ -31,7 +35,30 @@ export class ProductResponseDto {
   family?: {
     id: number;
     name: string;
+    requiredAttributes?: {
+      id: number;
+      name: string;
+      type: string;
+      defaultValue?: string;
+      userFriendlyType?: string;
+    }[];
+    optionalAttributes?: {
+      id: number;
+      name: string;
+      type: string;
+      defaultValue?: string;
+      userFriendlyType?: string;
+    }[];
   };
+  variants?: ProductVariantSummaryDto[]; // All products that are variants of this product
+  totalVariants?: number; // Count of variants
+  attributes?: any[]; // List of attribute IDs or details
+  assets?: any[]; // List of asset IDs or details
+
+  /**
+   * Message about removed attributes during create/update
+   */
+  removedAttributesMessage?: string;
 }
 
 export class CreateProductResponseDto {
